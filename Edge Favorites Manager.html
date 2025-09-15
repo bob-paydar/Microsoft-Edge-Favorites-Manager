@@ -1,0 +1,895 @@
+<!--
+  Microsoft Edge Favorites Manager
+  Code By: Bob Paydar
+
+  This is a well-crafted, accessible, and feature-rich bookmark management tool designed specifically for Microsoft Edge. The code is written in ES5 for maximum compatibility, ensuring robust performance across browsers, including legacy versions of Edge. It supports importing, editing, and exporting bookmark HTML files with a clean, modern UI.
+
+  Key features include:
+  - Parsing and rendering of Netscape-style bookmark HTML with folder hierarchy support.
+  - Drag-and-drop file loading, search functionality, and duplicate detection/removal.
+  - Folder management (add, rename, delete) with nested folder support.
+  - Link editing via a modal dialog with validation and folder path handling.
+  - Export options for both generic and Edge-specific bookmark formats.
+  - LocalStorage persistence for state retention across sessions.
+  - Accessible design with ARIA attributes, keyboard navigation, and high-contrast styling.
+
+  The CSS is modular, using a dark theme with responsive layouts (grid, flexbox) and smooth transitions for a polished user experience. The JavaScript is defensively written with error handling, UTF-8 support, and triple-wired event listeners for reliability in legacy environments.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+  <title>Edge Favorites Manager - By: Bob Paydar</title>
+  <style>
+    /* ===== Reset & theme ===== */
+    *,*::before,*::after{box-sizing:border-box}
+    html,body{height:100%}
+    body{margin:0;font:15px/1.5 Segoe UI, Roboto, Arial, sans-serif;background:#0b0d12;color:#e8ecf1}
+    a{color:#9cc7ff;text-decoration:none}
+    a:hover{text-decoration:underline}
+
+    /* ===== Layout ===== */
+    header{position:sticky;top:0;z-index:5;background:#121826;border-bottom:1px solid #263043}
+    .wrap{max-width:1100px;margin:0 auto;padding:16px}
+    h1{margin:0 0 6px;font-size:22px}
+    .sub{margin:0;color:#9aa4b2}
+
+    .toolbar{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+    .btn{border:1px solid #2b3852;background:#182133;color:#e8ecf1;padding:10px 12px;border-radius:10px;cursor:pointer;transition:border-color .15s ease}
+    .btn:hover{border-color:#6cb9ff}
+    .btn.primary{background:#1a2a4a}
+    .btn.danger{background:#2b1820;border-color:#5a2033}
+    .btn.small{padding:8px 10px;border-radius:8px}
+
+    main{max-width:1100px;margin:16px auto;padding:0 16px;display:grid;grid-template-columns:300px 1fr;gap:14px}
+    .panel{background:#111623;border:1px solid #263043;border-radius:12px;overflow:hidden}
+    .panel-head{padding:12px 14px;border-bottom:1px solid #263043;background:#0f1522}
+    .panel-body{padding:12px 14px}
+
+    /* Left: folders + drop zone */
+    .folders{display:flex;flex-direction:column;gap:10px}
+    .statline{font-size:13px;color:#9aa4b2}
+    #folder-list{display:flex;flex-direction:column;gap:4px;max-height:45vh;overflow:auto;border:1px solid #223049;border-radius:10px;padding:6px;background:#0b101c}
+    .folder-row{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:8px}
+    .folder-row:hover{background:#1b2233}
+    .folder-name{flex:1;cursor:pointer;border-radius:6px;padding:2px 0}
+    .folder-name[aria-selected="true"]{outline:2px solid #5aa9ff;background:#162238}
+    .muted{opacity:.7}
+
+    .drop{border:2px dashed #324766;border-radius:12px;padding:14px;text-align:center;background:#0b101c}
+    .drop p{margin:6px 0 0;color:#9aa4b2;font-size:13px}
+    .drop.drag{border-color:#7bc4ff;background:#102035}
+
+    /* Right: search + table + status */
+    .searchbar{display:flex;gap:8px;align-items:center}
+    .input{flex:1;min-width:120px;background:#0b0e14;border:1px solid #2a3650;border-radius:10px;color:#e8ecf1;padding:10px 12px}
+    .badges{display:flex;gap:8px;align-items:center}
+    .badge{font-size:12px;padding:4px 8px;border:1px solid #2a3650;border-radius:999px;color:#cfe0ff;background:#0e1422}
+
+    .tablewrap{margin-top:10px;border:1px solid #223049;border-radius:10px;overflow:auto;background:#0b101c;max-height:52vh}
+    table{width:100%;border-collapse:collapse}
+    thead th{position:sticky;top:0;background:#11192a;border-bottom:1px solid #223049;padding:10px;text-align:left;font-weight:600}
+    tbody td{border-bottom:1px solid #151d2c;padding:10px;vertical-align:top}
+    tbody tr:hover{background:#101a2b}
+
+    .status{display:flex;gap:12px;align-items:center;margin-top:10px;font-size:13px;color:#9aa4b2}
+
+    /* Log */
+    #log{display:none;position:fixed;right:14px;bottom:14px;width:min(520px,92vw);max-height:42vh;overflow:auto;background:#0b0e14;border:1px solid #2a3347;border-radius:12px;padding:10px 12px;font:12px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;white-space:pre-wrap;z-index:200}
+    #log b{color:#ffd166}
+
+    /* File input (visually hidden, not display:none) */
+    .filepick {
+      position:absolute;
+      left:-9999px; top:auto;
+      width:0; height:0; overflow:hidden;
+      opacity:0; pointer-events:none;
+    }
+
+    /* Modal dialog (fixed for IE/Edge legacy) */
+    .modal-backdrop{
+      position:fixed;
+      top:0; right:0; bottom:0; left:0;
+      background:rgba(0,0,0,.5);
+      display:none;
+      align-items:center;
+      justify-content:center;
+      z-index:9999;
+    }
+    /* KEY FIX: show the BACKDROP when it has .show */
+    .modal-backdrop.show{display:flex}
+    .modal{width:min(560px,94vw);background:#111623;border:1px solid #263043;border-radius:12px}
+    .modal-head{padding:12px 16px;border-bottom:1px solid #263043;background:#0f1522;font-weight:600}
+    .modal-body{padding:12px 16px;display:grid;grid-template-columns:120px 1fr;gap:10px}
+    .modal-body label{align-self:center}
+    .modal-foot{display:flex;gap:8px;justify-content:flex-end;padding:12px 16px;border-top:1px solid #263043}
+
+    /* Inputs inside modal */
+    .field{width:100%;background:#0b0e14;border:1px solid #2a3650;border-radius:8px;color:#e8ecf1;padding:8px 10px}
+    .help{grid-column:1 / -1;color:#9aa4b2;font-size:12px}
+    .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <h1>Edge Favorites Manager - By: Bob Paydar</h1>
+      <p class="sub">ES5-only, guarded triple wiring, UTF-8, accessible.</p>
+
+      <!-- File input -->
+      <input id="file-input" class="filepick" type="file" accept=".html,.htm,text/html" aria-label="Choose favorites HTML file">
+
+      <div class="toolbar" role="toolbar" aria-label="Main actions">
+        <button type="button" class="btn primary" id="open-html" aria-label="Open HTML file">📂 Open HTML</button>
+        <button type="button" class="btn" id="load-demo" aria-label="Load demo data">🧪 Load Demo</button>
+        <button type="button" class="btn" id="save-as" aria-label="Save as file">💾 Save As…</button>
+        <button type="button" class="btn" id="save-edge" aria-label="Save as Edge format">💾 Save As (Edge)</button>
+        <button type="button" class="btn" id="add-folder" aria-label="Add new folder">➕ Add Folder</button>
+        <button type="button" class="btn" id="add-link" aria-label="Add new link">➕ Add Link</button>
+        <button type="button" class="btn" id="remove-dup" aria-label="Remove duplicate links">🧹 Remove Duplicates</button>
+        <button type="button" class="btn" id="rename-folder" aria-label="Rename selected folder">✏️ Rename Folder</button>
+        <button type="button" class="btn danger" id="delete-folder" aria-label="Delete selected folder">🗑️ Delete Folder</button>
+        <button type="button" class="btn danger" id="delete-folders" aria-label="Delete checked folders">🗑️ Delete Checked Folders</button>
+        <button type="button" class="btn danger" id="delete-selected" aria-label="Delete selected items">🗑️ Delete Selected Links</button>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <!-- Left column -->
+    <section class="panel" aria-label="Folders">
+      <div class="panel-head"><strong>Folders</strong></div>
+      <div class="panel-body folders">
+        <div class="statline">Total: <span id="folder-count">0</span> | Checked: <span id="folder-checked-count">0</span></div>
+        <div id="folder-list" role="tree" aria-label="Folder list"></div>
+
+        <!-- Drag & Drop loader -->
+        <div id="drop" class="drop" role="region" aria-label="Drop bookmarks file here" tabindex="0">
+          <strong>Drop bookmarks HTML here</strong>
+          <p>…or use <em>📂 Open HTML</em> above</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Right column -->
+    <section class="panel" aria-label="Favorites">
+      <div class="panel-head"><strong>Favorites</strong></div>
+      <div class="panel-body">
+        <div class="searchbar">
+          <label for="search-input" class="sr-only">Search favorites</label>
+          <input class="input" type="text" id="search-input" placeholder="Search title or URL" aria-label="Search favorites">
+          <div class="badges">
+            <button type="button" class="btn small" id="select-all" aria-label="Select all items">Select All</button>
+            <button type="button" class="btn small" id="clear-selection" aria-label="Clear selection">Clear</button>
+          </div>
+        </div>
+
+        <div class="tablewrap" role="region" aria-label="Favorites table">
+          <table id="favorites-table" role="grid" aria-label="Favorites">
+            <thead>
+              <tr>
+                <th scope="col"><input type="checkbox" id="select-all-rows" aria-label="Select all rows"></th>
+                <th scope="col">Title</th>
+                <th scope="col">URL</th>
+                <th scope="col">Folder</th>
+                <th scope="col">Added</th>
+                <th scope="col">Actions</th>
+              </tr>
+            </thead>
+            <tbody><!-- rows go here --></tbody>
+          </table>
+        </div>
+
+        <div class="status">
+          <span class="badge">Links: <span id="link-count">0</span></span>
+          <span class="badge">Duplicates: <span id="dupe-count">0</span></span>
+          <span class="badge">Selected: <span id="selected-count">0</span></span>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="log"><b>Log</b>: Booting…</div>
+
+  <!-- ===== Modal: Edit Link ===== -->
+  <div id="edit-modal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="edit-title" aria-hidden="true">
+    <div class="modal" role="document">
+      <div class="modal-head" id="edit-title">Edit Link</div>
+      <div class="modal-body">
+        <label for="edit-title-input">Title</label>
+        <input id="edit-title-input" class="field" type="text" aria-label="Title">
+
+        <label for="edit-url-input">URL</label>
+        <input id="edit-url-input" class="field" type="url" aria-label="URL">
+
+        <label for="edit-folder-input">Folder path</label>
+        <input id="edit-folder-input" class="field" type="text" aria-label="Folder path">
+
+        <label for="edit-adddate-input">Add date (UNIX)</label>
+        <input id="edit-adddate-input" class="field" type="number" aria-label="Add date">
+
+        <label for="edit-icon-input">Icon (data/url)</label>
+        <input id="edit-icon-input" class="field" type="text" aria-label="Icon data or URL">
+
+        <div class="help">Tip: Folder path like <code>Favorites bar/Work</code>. If it doesn’t exist, it will be created.</div>
+      </div>
+      <div class="modal-foot">
+        <button type="button" class="btn" id="edit-cancel">Cancel</button>
+        <button type="button" class="btn primary" id="edit-save">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  /* ===========================
+     Utilities (ES5)
+     =========================== */
+  function $(id){return document.getElementById(id);}
+  function addEvent(el,ev,fn){if(!el)return; if(el.addEventListener)el.addEventListener(ev,fn,false); else if(el.attachEvent)el.attachEvent('on'+ev,fn); else el['on'+ev]=fn;}
+  function activateLikeButton(handler){return function(e){e=e||window.event; var t=e.type, k=e.which||e.keyCode; if(t==='click'||(t==='keypress'&&(k===13||k===32))){return handler(e);}};}
+  function text(el,s){if(el) el.textContent=s;}
+  function log(msg){var box=$('log'); if(!box)return; box.textContent+='\n'+msg; try{box.scrollTop=box.scrollHeight;}catch(e){}}
+  function uid(){return Math.random().toString(36).slice(2,9);}
+  function fmtDate(ts){return ts?new Date(ts*1000).toLocaleDateString():'';}
+  function escapeHtml(s){return (s||'').replace(/[&<>\"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]||c;});}
+  function escapeAttr(s){return escapeHtml(s).replace(/\n/g,' ');}
+  function prevent(e){ if(e && e.preventDefault) e.preventDefault(); return false; }
+
+  /* ===========================
+     State & persistence
+     =========================== */
+  var state={flat:[],folders:{},itemsByFolder:{},activeFolder:"",filter:"",selection:{}, folderChecks:{}};
+  function saveToLocal(){try{localStorage.setItem('efmData',JSON.stringify({flat:state.flat,folders:state.folders,itemsByFolder:state.itemsByFolder,activeFolder:state.activeFolder,folderChecks:state.folderChecks}));}catch(e){log('localStorage save failed: '+e);}}
+  function loadFromLocal(){try{var raw=localStorage.getItem('efmData'); if(!raw)return false; var d=JSON.parse(raw); if(!d||!d.flat)return false; state.flat=d.flat||[]; state.folders=d.folders||{}; state.itemsByFolder=d.itemsByFolder||{}; state.activeFolder=d.activeFolder||""; state.folderChecks=d.folderChecks||{}; return true;}catch(e){log('localStorage load failed: '+e); return false;}}
+
+  /* ===========================
+     Folder helpers
+     =========================== */
+  function ensureFolder(path,name,parent){
+    if(!state.folders[path]){ state.folders[path]={name:name,path:path,parent:parent,childrenFolders:[]};
+      if(parent!==null&&typeof parent!=="undefined"){ var pf=state.folders[parent]; if(pf&&pf.childrenFolders.indexOf(path)===-1) pf.childrenFolders.push(path); } }
+    if(!state.itemsByFolder[path]) state.itemsByFolder[path]=[];
+  }
+  function ensureFolderPathExists(path){
+    if(path==="")return; var parts=path.split("/"); var parent="";
+    for(var i=0;i<parts.length;i++){ var name=parts[i]; var sub=parent?(parent+"/"+name):name; ensureFolder(sub,name,parent); parent=sub; }
+  }
+  function childFoldersOf(path){var f=state.folders[path]; return f&&f.childrenFolders?f.childrenFolders.slice():[];}
+  function allFolderPaths(){var arr=[],k; for(k in state.folders){if(state.folders.hasOwnProperty(k)&&k!=="")arr.push(k);} return arr;}
+  function listDescendants(path){var out=[path], i; function walk(p){var kids=childFoldersOf(p); for(i=0;i<kids.length;i++){ out.push(kids[i]); walk(kids[i]); }} walk(path); return out;}
+
+  /* ===========================
+     Parser
+     =========================== */
+  function parseBookmarksHTML(text){
+    var doc;
+    try{ doc=new DOMParser().parseFromString(text,"text/html"); }
+    catch(e){ log('DOMParser failed: '+e); return {flat:[],folders:{"":{name:"(root)",path:"",parent:null,childrenFolders:[]}},itemsByFolder:{"":[]}}; }
+
+    var dls=doc.getElementsByTagName('DL');
+    if(!dls || !dls.length){
+      dls=doc.getElementsByTagName('dl');
+      if(!dls || !dls.length){ log('No <DL> found in HTML — is this a bookmarks file?'); return {flat:[],folders:{"":{name:"(root)",path:"",parent:null,childrenFolders:[]}},itemsByFolder:{"":[]}}; }
+    }
+    var rootDL=dls[0];
+
+    var flat=[], folders={}, itemsByFolder={};
+    function ensureLocal(path,name,parent){
+      if(!folders[path]){ folders[path]={name:name,path:path,parent:parent,childrenFolders:[]};
+        if(parent!==null&&typeof parent!=="undefined"){ var pf=folders[parent]; if(pf&&pf.childrenFolders.indexOf(path)===-1) pf.childrenFolders.push(path); } }
+      if(!itemsByFolder[path]) itemsByFolder[path]=[];
+    }
+    ensureLocal("","(root)",null);
+
+    function firstChildTag(el, tag){
+      var list=el.getElementsByTagName(tag);
+      return list && list.length ? list[0] : null;
+    }
+    function nextElementSibling(el){
+      if(!el) return null;
+      var n=el.nextSibling;
+      while(n && n.nodeType!==1) n=n.nextSibling;
+      return n;
+    }
+
+    function walk(dl,parentPath){
+      var node=dl.firstChild;
+      while(node){
+        if(node.nodeType===1){
+          var tag=(node.tagName||'').toUpperCase();
+          if(tag==='DT'){
+            var h3 = firstChildTag(node,'H3') || firstChildTag(node,'h3');
+            var a  = firstChildTag(node,'A')  || firstChildTag(node,'a');
+
+            if(h3){
+              var name=(h3.textContent||"").trim();
+              var sib=nextElementSibling(node);
+              var subDL=(sib && (sib.tagName||'').toUpperCase()==='DL') ? sib : (firstChildTag(node,'DL') || firstChildTag(node,'dl'));
+              var path=parentPath?parentPath+"/"+name:name;
+              ensureLocal(path,name,parentPath||"");
+              if(subDL) walk(subDL,path);
+            } else if(a){
+              var bm={id:uid(),
+                      title:(a.textContent||"").trim(),
+                      url:a.getAttribute("HREF")||a.getAttribute("href")||"",
+                      addDate:a.hasAttribute("ADD_DATE")?Number(a.getAttribute("ADD_DATE")):
+                              (a.hasAttribute("add_date")?Number(a.getAttribute("add_date")):undefined),
+                      icon:a.getAttribute("ICON")||a.getAttribute("icon")||"",
+                      folder:parentPath||""};
+              flat.push(bm);
+              itemsByFolder[parentPath||""].push(bm.id);
+            }
+          }
+        }
+        node=node.nextSibling;
+      }
+    }
+
+    walk(rootDL,"");
+    return {flat:flat,folders:folders,itemsByFolder:itemsByFolder};
+  }
+
+  /* ===========================
+     Rendering
+     =========================== */
+  function renderFolders(){
+    var box=$('folder-list'); if(!box)return; box.innerHTML='';
+    var queue=[{path:"",depth:0}];
+    while(queue.length){
+      var cur=queue.shift(), path=cur.path, depth=cur.depth;
+      if(path!==""){
+        var f=state.folders[path];
+        var row=document.createElement('div'); row.className='folder-row';
+
+        var cb=document.createElement('input'); cb.type='checkbox'; cb.setAttribute('data-path', path);
+        if(state.folderChecks[path]) cb.checked=true;
+        addEvent(cb,'click',function(e){ e=e||window.event; if(e.stopPropagation) e.stopPropagation(); });
+        addEvent(cb,'change',function(p){ return function(e){ var t=e.target||e.srcElement; if(t.checked) state.folderChecks[p]=true; else delete state.folderChecks[p]; updateFolderChecked(); saveToLocal(); }; }(path));
+        row.appendChild(cb);
+
+        var nameBtn=document.createElement('div');
+        nameBtn.className='folder-name';
+        nameBtn.setAttribute('role','treeitem');
+        nameBtn.setAttribute('tabindex','0');
+        nameBtn.setAttribute('aria-level', String(depth+1));
+        nameBtn.setAttribute('aria-label','Open folder '+(f.name||''));
+        if(state.activeFolder===path) nameBtn.setAttribute('aria-selected','true');
+        nameBtn.appendChild(document.createTextNode('📁 '+f.name+' '));
+        var countSpan=document.createElement('span'); countSpan.className='muted';
+        countSpan.appendChild(document.createTextNode('('+((state.itemsByFolder[path]||[]).length)+')'));
+        nameBtn.appendChild(countSpan);
+
+        addEvent(nameBtn,'click',function(p){return function(){ state.activeFolder=p; renderTable(); renderFolders(); saveToLocal(); };}(path));
+        addEvent(nameBtn,'keypress',activateLikeButton(function(p){return function(){ state.activeFolder=p; renderTable(); renderFolders(); saveToLocal(); };}(path)));
+
+        row.appendChild(nameBtn);
+        box.appendChild(row);
+      }
+      var children=childFoldersOf(path);
+      for(var i=0;i<children.length;i++){ queue.push({path:children[i],depth:path===""?0:depth+1}); }
+    }
+    text($('folder-count'), String(allFolderPaths().length));
+    updateFolderChecked();
+  }
+
+  function updateFolderChecked(){
+    var n=0,k; for(k in state.folderChecks){ if(state.folderChecks.hasOwnProperty(k) && state.folderChecks[k]) n++; }
+    text($('folder-checked-count'), String(n));
+  }
+
+  function idsInActive(){ return state.itemsByFolder[state.activeFolder||""]||[]; }
+
+  function renderTable(){
+    var tbody=$('favorites-table').getElementsByTagName('tbody')[0]; tbody.innerHTML='';
+    var ids=idsInActive(), list=[], i,j,id,b;
+
+    for(i=0;i<ids.length;i++){ id=ids[i]; b=null; for(j=0;j<state.flat.length;j++){ if(state.flat[j].id===id){ b=state.flat[j]; break; } } if(b) list.push(b); }
+
+    var f=(state.filter||'').toLowerCase();
+    if(f){
+      var filtered=[];
+      for(i=0;i<list.length;i++){ b=list[i]; if((b.title||'').toLowerCase().indexOf(f)>-1||(b.url||'').toLowerCase().indexOf(f)>-1) filtered.push(b); }
+      list=filtered;
+    }
+
+    for(i=0;i<list.length;i++){
+      b=list[i];
+      var tr=document.createElement('tr');
+
+      var td0=document.createElement('td');
+      var cb=document.createElement('input'); cb.type='checkbox'; cb.className='rowchk'; cb.setAttribute('data-id', b.id);
+      if(state.selection[b.id]) cb.checked=true;
+      addEvent(cb,'change',function(id){return function(e){var t=e.target||e.srcElement; if(t.checked) state.selection[id]=true; else delete state.selection[id]; updateStats();};}(b.id));
+      td0.appendChild(cb);
+
+      var td1=document.createElement('td'); td1.textContent=b.title||'';
+      var td2=document.createElement('td'); var a=document.createElement('a'); a.href=b.url||''; a.target='_blank'; a.appendChild(document.createTextNode(b.url||'')); td2.appendChild(a);
+      var td3=document.createElement('td'); td3.textContent=b.folder||'(root)';
+      var td4=document.createElement('td'); td4.textContent=fmtDate(b.addDate);
+
+      var td5=document.createElement('td');
+      var editBtn=document.createElement('button'); editBtn.className='btn small'; editBtn.type='button'; editBtn.textContent='Edit';
+      addEvent(editBtn,'click',function(bid){ return function(){ openEditDialog(bid); }; }(b.id));
+      td5.appendChild(editBtn);
+
+      tr.appendChild(td0); tr.appendChild(td1); tr.appendChild(td2); tr.appendChild(td3); tr.appendChild(td4); tr.appendChild(td5);
+      tbody.appendChild(tr);
+    }
+    updateStats();
+  }
+
+  function updateStats(){
+    text($('link-count'), String(state.flat.length));
+    var seen={}, d=0, i, u;
+    for(i=0;i<state.flat.length;i++){ u=(state.flat[i].url||'').toLowerCase(); if(!u) continue; if(seen[u]) d++; else seen[u]=1; }
+    text($('dupe-count'), String(d));
+    var c=0,k; for(k in state.selection){ if(state.selection[k]) c++; } text($('selected-count'), String(c));
+  }
+
+  /* ===========================
+     Load / Save
+     =========================== */
+  function handleParsedResult(res){
+    state.flat=res.flat; state.folders=res.folders; state.itemsByFolder=res.itemsByFolder;
+    state.selection={}; state.folderChecks={}; state.activeFolder="";
+    renderFolders(); renderTable(); saveToLocal();
+    log('Loaded '+state.flat.length+' link(s).');
+  }
+
+  var _fileToken = 0;
+  function fileChosen(e){
+    var tgt=e && (e.target||e.srcElement);
+    var files = tgt && tgt.files ? tgt.files : null;
+    if(!files || !files.length){ log('File event but no files.'); return; }
+    var tokenNow = ++_fileToken;
+    var file = files[0];
+    log('Selected: "'+file.name+'" ('+file.type+', '+file.size+' bytes)');
+
+    try{
+      var reader = new FileReader();
+      reader.onerror = function(ev){ if(tokenNow!==_fileToken) return; log('FileReader error: '+(ev && ev.target && ev.target.error)); };
+      reader.onload  = function(){ if(tokenNow!==_fileToken) return;
+        try{
+          var txt = String(reader.result||'');
+          log('File read OK, length='+txt.length);
+          var res = parseBookmarksHTML(txt);
+          handleParsedResult(res);
+        }catch(err){ log('Parse failure: '+err); }
+      };
+      try{ reader.readAsText(file,'utf-8'); } catch(_){ reader.readAsText(file); }
+    }catch(ex){ log('FileReader not available: '+ex); }
+  }
+
+  /* ===========================
+     Actions: open/demo/save
+     =========================== */
+  var _openGuardAt = 0;
+  function onOpen(){
+    var now = Date.now();
+    if(now - _openGuardAt < 400){ return; }
+    _openGuardAt = now;
+
+    var fi=$('file-input');
+    if(!fi){ log('file-input missing'); return; }
+    log('Open clicked → showing file picker…');
+    try{ fi.value = ""; }catch(_){}
+    setTimeout(function(){ fi.click(); }, 0);
+  }
+
+  function onDemo(){
+    var demo='<!DOCTYPE NETSCAPE-Bookmark-file-1>\n<H1>Bookmarks</H1>\n<DL><p>\n'
+      +'  <DT><A HREF="https://example.com" ADD_DATE="1710000000">Root Link</A>\n'
+      +'  <DT><H3>Favorites bar</H3>\n  <DL><p>\n'
+      +'    <DT><A HREF="https://www.google.com/" ADD_DATE="1498037522">Google</A>\n'
+      +'    <DT><A HREF="https://www.youtube.com/" ADD_DATE="1498037523">YouTube</A>\n'
+      +'  </DL><p>\n'
+      +'  <DT><H3>Work</H3>\n  <DL><p>\n'
+      +'    <DT><A HREF="https://mail.google.com/mail/u/0" ADD_DATE="1693090660">Gmail</A>\n'
+      +'    <DT><A HREF="https://mail.google.com/mail/u/0/" ADD_DATE="1693090661">Gmail (dup)</A>\n'
+      +'  </DL><p>\n'
+      +'</DL><p>';
+    handleParsedResult(parseBookmarksHTML(demo));
+  }
+
+  function onSave(){
+    function serializeFolder(path){
+      var out=""; if(path!==""){ var name=state.folders[path].name; out+='  <DT><H3>'+escapeHtml(name)+'</H3>\n  <DL><p>\n'; }
+      var ids=state.itemsByFolder[path]||[]; for(var i=0;i<ids.length;i++){ var id=ids[i]; var b=null; for(var k=0;k<state.flat.length;k++){ if(state.flat[k].id===id){ b=state.flat[k]; break; } } if(!b) continue;
+        var ad=b.addDate?(' ADD_DATE="'+b.addDate+'"'):""; var ic=b.icon?(' ICON="'+escapeAttr(b.icon)+'"'):"";
+        out+='    <DT><A HREF="'+escapeAttr(b.url)+'"'+ad+ic+'>'+escapeHtml(b.title||b.url||"")+'</A>\n'; }
+      var children=childFoldersOf(path); for(var c=0;c<children.length;c++){ out+=serializeFolder(children[c]); }
+      if(path!=="") out+='  </DL><p>\n'; return out;
+    }
+    var header='<!DOCTYPE NETSCAPE-Bookmark-file-1>\n<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=UTF-8">\n<TITLE>Bookmarks</TITLE>\n<H1>Bookmarks</H1>\n<DL><p>\n';
+    var footer='</DL><p>'; var body=serializeFolder(""); var html=header+body+footer;
+    var a=document.createElement('a'); var blob=new Blob([html],{type:'text/html;charset=utf-8'}); var dt=new Date();
+    a.href=URL.createObjectURL(blob); a.download='favorites_clean_'+dt.getFullYear()+'-'+('0'+(dt.getMonth()+1)).slice(-2)+'-'+('0'+dt.getDate()).slice(-2)+'.html';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a); log('Saved generic bookmarks HTML.');
+  }
+
+  function onSaveEdge(){
+    var now=Math.floor(Date.now()/1000);
+
+    function serializeFolderEdge(path){
+      var out=''; if(path!==""){ var name=state.folders[path].name;
+        out+='  <DT><H3 ADD_DATE="'+now+'" LAST_MODIFIED="'+now+'">'+escapeHtml(name)+'</H3>\r\n  <DL><p>\r\n'; }
+      var ids=state.itemsByFolder[path]||[]; for(var i=0;i<ids.length;i++){ var id=ids[i]; var b=null; for(var k=0;k<state.flat.length;k++){ if(state.flat[k].id===id){ b=state.flat[k]; break; } } if(!b) continue;
+        var ad=b.addDate?(' ADD_DATE="'+b.addDate+'"'):""; var ic=b.icon?(' ICON="'+escapeAttr(b.icon)+'"'):"";
+        out+='    <DT><A HREF="'+escapeAttr(b.url)+'"'+ad+ic+'>'+escapeHtml(b.title||b.url||"")+'</A>\r\n'; }
+      var children=childFoldersOf(path); for(var c=0;c<children.length;c++){ out+=serializeFolderEdge(children[c]); }
+      if(path!=="") out+='  </DL><p>\r\n'; return out;
+    }
+    function serializeFolderChildrenOnly(path){
+      var out='';
+      var ids=state.itemsByFolder[path]||[]; for(var i=0;i<ids.length;i++){ var id=ids[i]; var b=null; for(var k=0;k<state.flat.length;k++){ if(state.flat[k].id===id){ b=state.flat[k]; break; } } if(!b) continue;
+        var ad=b.addDate?(' ADD_DATE="'+b.addDate+'"'):""; var ic=b.icon?(' ICON="'+escapeAttr(b.icon)+'"'):"";
+        out+='    <DT><A HREF="'+escapeAttr(b.url)+'"'+ad+ic+'>'+escapeHtml(b.title||b.url||"")+'</A>\r\n'; }
+      var children=childFoldersOf(path); for(var c=0;c<children.length;c++){ out+=serializeFolderEdge(children[c]); }
+      return out;
+    }
+
+    var EDGE_BAR='Favorites bar', EDGE_OTHER='Other favorites';
+    var top=childFoldersOf(""), barPath=null, otherPath=null, others=[], i, p, nm;
+    for(i=0;i<top.length;i++){ p=top[i]; nm=state.folders[p].name;
+      if(nm===EDGE_BAR) barPath=p; else if(nm===EDGE_OTHER) otherPath=p; else others.push(p); }
+    var rootIds=(state.itemsByFolder[""]||[]).slice();
+
+    var header='<!DOCTYPE NETSCAPE-Bookmark-file-1>\r\n'
+              +'<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=UTF-8">\r\n'
+              +'<TITLE>Bookmarks</TITLE>\r\n'
+              +'<H1>Bookmarks</H1>\r\n'
+              +'<DL><p>\r\n';
+
+    var body='';
+    body+='  <DT><H3 ADD_DATE="'+now+'" LAST_MODIFIED="'+now+'" PERSONAL_TOOLBAR_FOLDER="true">'+EDGE_BAR+'</H3>\r\n  <DL><p>\r\n';
+    if(barPath){ body+=serializeFolderChildrenOnly(barPath); }
+    body+='  </DL><p>\r\n';
+
+    for(i=0;i<rootIds.length;i++){
+      var rid=rootIds[i]; var rb=null; for(var k=0;k<state.flat.length;k++){ if(state.flat[k].id===rid){ rb=state.flat[k]; break; } }
+      if(!rb) continue;
+      var ad=rb.addDate?(' ADD_DATE="'+rb.addDate+'"'):""; var ic=rb.icon?(' ICON="'+escapeAttr(rb.icon)+'"'):"";
+      body+='  <DT><A HREF="'+escapeAttr(rb.url)+'"'+ad+ic+'>'+escapeHtml(rb.title||rb.url||"")+'</A>\r\n';
+    }
+
+    body+='  <DT><H3 ADD_DATE="'+now+'" LAST_MODIFIED="'+now+'">'+EDGE_OTHER+'</H3>\r\n  <DL><p>\r\n';
+    if(otherPath){ body+=serializeFolderChildrenOnly(otherPath); }
+    for(i=0;i<others.length;i++){ body+=serializeFolderEdge(others[i]); }
+    body+='  </DL><p>\r\n';
+
+    var footer='</DL><p>';
+    var html=header+body+footer;
+
+    var a=document.createElement('a'); var blob=new Blob([html],{type:'text/html;charset=utf-8'}); var dt=new Date();
+    a.href=URL.createObjectURL(blob);
+    a.download='edge_favorites_'+dt.getFullYear()+'-'+('0'+(dt.getMonth()+1)).slice(-2)+'-'+('0'+dt.getDate()).slice(-2)+'.html';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    log('Saved Edge-friendly bookmarks HTML (no dup toolbar; root links at root).');
+  }
+
+  /* ===========================
+     Link editing modal
+     =========================== */
+  var _editId=null;
+  function findById(id){
+    var i; for(i=0;i<state.flat.length;i++){ if(state.flat[i].id===id) return state.flat[i]; }
+    return null;
+  }
+  function openEditDialog(id){
+    var bm=findById(id); if(!bm){ alert('Link not found'); return; }
+    _editId=id;
+    $('edit-title-input').value=bm.title||'';
+    $('edit-url-input').value=bm.url||'';
+    $('edit-folder-input').value=bm.folder||'';
+    $('edit-adddate-input').value=(bm.addDate||'');
+    $('edit-icon-input').value=bm.icon||'';
+    var m=$('edit-modal');
+    m.className='modal-backdrop show';
+    m.style.display='flex'; /* fallback for legacy mode */
+    m.setAttribute('aria-hidden','false');
+    $('edit-title-input').focus();
+    log('Opening edit dialog for '+(bm.title||bm.url));
+  }
+  function closeEditDialog(){
+    var m=$('edit-modal');
+    m.className='modal-backdrop';
+    m.style.display='none'; /* fallback for legacy mode */
+    m.setAttribute('aria-hidden','true');
+    _editId=null;
+  }
+  function saveEditDialog(){
+    if(!_editId){ closeEditDialog(); return; }
+    var bm=findById(_editId); if(!bm){ closeEditDialog(); return; }
+    var newTitle=$('edit-title-input').value||'';
+    var newUrl=$('edit-url-input').value||'';
+    var newFolder=($('edit-folder-input').value||'').replace(/\s*\/\s*/g,'/').replace(/\/+/,'/').replace(/^\s+|\s+$/g,'');
+    var newAddDate=parseInt($('edit-adddate-input').value,10); if(isNaN(newAddDate)) newAddDate=undefined;
+    var newIcon=$('edit-icon-input').value||'';
+
+    if(newFolder!==bm.folder){
+      ensureFolderPathExists(newFolder);
+      var arr=state.itemsByFolder[bm.folder]||[], i, arr2=[];
+      for(i=0;i<arr.length;i++){ if(arr[i]!==bm.id) arr2.push(arr[i]); }
+      state.itemsByFolder[bm.folder]=arr2;
+      (state.itemsByFolder[newFolder]||(state.itemsByFolder[newFolder]=[])).push(bm.id);
+      bm.folder=newFolder;
+    }
+
+    bm.title=newTitle; bm.url=newUrl; bm.addDate=newAddDate; bm.icon=newIcon;
+
+    closeEditDialog();
+    renderFolders(); renderTable(); saveToLocal();
+    log('Edited link "'+(bm.title||bm.url)+'".');
+  }
+
+  /* Close dialog on backdrop click (outside) */
+  addEvent(document,'click',function(e){
+    var m=$('edit-modal');
+    if(!m || m.className.indexOf('show')===-1) return;
+    var target=e.target||e.srcElement;
+    if(target===m){ closeEditDialog(); }
+  });
+  /* Close dialog on Esc */
+  addEvent(document,'keydown',function(e){
+    e=e||window.event; var k=e.which||e.keyCode;
+    if(k===27){ closeEditDialog(); }
+  });
+
+  /* ===========================
+     Delete selected links
+     =========================== */
+  function onDeleteSelected(){
+    var ids=[],k; for(k in state.selection){ if(state.selection[k]) ids.push(k); }
+    if(ids.length===0) return; if(!confirm("Delete "+ids.length+" selected link(s)?")) return;
+    var kill={}, i, b; for(i=0;i<ids.length;i++) kill[ids[i]]=true;
+    var keep=[]; for(i=0;i<state.flat.length;i++){ b=state.flat[i]; if(!kill[b.id]) keep.push(b); }
+    state.flat=keep;
+    for(k in state.itemsByFolder){ if(state.itemsByFolder.hasOwnProperty(k)){ var arr=state.itemsByFolder[k], arr2=[], j;
+      for(j=0;j<arr.length;j++){ if(!kill[arr[j]]) arr2.push(arr[j]); } state.itemsByFolder[k]=arr2; } }
+    state.selection={}; renderTable(); saveToLocal(); log('Deleted '+ids.length+' link(s).');
+  }
+
+  /* ===========================
+     Remove Duplicates
+     =========================== */
+  function onRemoveDuplicates(){
+    var seen={}, killMap={}, i, b, norm, removed=0;
+    for(i=0;i<state.flat.length;i++){
+      b=state.flat[i]; norm=(b.url||'').toLowerCase();
+      if(!norm) continue;
+      if(seen[norm]){ killMap[b.id]=true; removed++; } else { seen[norm]=b.id; }
+    }
+    if(!removed){ log('No duplicates found.'); return; }
+
+    var keep=[], id;
+    for(i=0;i<state.flat.length;i++){ id=state.flat[i].id; if(!killMap[id]) keep.push(state.flat[i]); }
+    state.flat=keep;
+
+    var k, arr, arr2, j;
+    for(k in state.itemsByFolder){ if(state.itemsByFolder.hasOwnProperty(k)){
+      arr=state.itemsByFolder[k]; arr2=[];
+      for(j=0;j<arr.length;j++){ if(!killMap[arr[j]]) arr2.push(arr[j]); }
+      state.itemsByFolder[k]=arr2;
+    }}
+
+    for(k in state.selection){ if(state.selection.hasOwnProperty(k) && killMap[k]) delete state.selection[k]; }
+
+    renderTable(); updateStats(); saveToLocal();
+    log('Removed '+removed+' duplicate link(s).');
+  }
+
+  /* ===========================
+     Rename/Delete folder (single) + Multi delete
+     =========================== */
+  function onRenameFolder(){
+    var cur=state.activeFolder;
+    if(!cur){ alert('Select a folder to rename (click it on the left).'); return; }
+    var curObj=state.folders[cur]; if(!curObj){ alert('Folder not found.'); return; }
+
+    var parent=curObj.parent||"";
+    var newName=prompt('New name for folder:', curObj.name);
+    if(newName===null) return;
+    newName=String(newName).replace(/^\s+|\s+$/g,'');
+    if(newName===""||newName==="/"){ alert('Invalid name.'); return; }
+
+    var newPath=parent? (parent+'/'+newName) : newName;
+    if(newPath===cur){ log('Name unchanged.'); return; }
+    if(state.folders[newPath]){ alert('A folder with this name already exists at the same level.'); return; }
+
+    var desc=listDescendants(cur), map={}, i, oldP, suffix;
+    for(i=0;i<desc.length;i++){
+      oldP=desc[i];
+      suffix=oldP.substr(cur.length);
+      map[oldP]=newPath+suffix;
+    }
+
+    var newFolders={}, k;
+    for(k in state.folders){ if(state.folders.hasOwnProperty(k)){
+      if(map[k]){
+        var src=state.folders[k];
+        var np=map[k];
+        var nparent = src.parent ? (map[src.parent]||src.parent) : null;
+        newFolders[np]={name: (np===newPath ? newName : src.name), path: np, parent: nparent, childrenFolders: []};
+      } else {
+        newFolders[k]=state.folders[k];
+        newFolders[k].childrenFolders = state.folders[k].childrenFolders.slice();
+      }
+    }}
+
+    for(k in newFolders){ if(newFolders.hasOwnProperty(k)){ newFolders[k].childrenFolders=[]; } }
+    for(k in newFolders){ if(newFolders.hasOwnProperty(k)){
+      var pf=newFolders[k].parent;
+      if(pf!==null && typeof pf!=="undefined" && newFolders[pf] && k!==""){
+        if(newFolders[pf].childrenFolders.indexOf(k)===-1) newFolders[pf].childrenFolders.push(k);
+      }
+    }}
+
+    var newItems={}, kk;
+    for(kk in state.itemsByFolder){ if(state.itemsByFolder.hasOwnProperty(kk)){
+      newItems[ map[kk] ? map[kk] : kk ] = state.itemsByFolder[kk].slice();
+    }}
+
+    var i2, bm;
+    for(i2=0;i2<state.flat.length;i2++){
+      bm=state.flat[i2];
+      if(map[bm.folder]) bm.folder = map[bm.folder];
+    }
+
+    state.folders=newFolders;
+    state.itemsByFolder=newItems;
+    state.activeFolder=newPath;
+
+    renderFolders(); renderTable(); saveToLocal();
+    log('Renamed folder: "'+curObj.name+'" → "'+newName+'"');
+  }
+
+  function deleteFoldersCore(list, ask){
+    var roots=[], i;
+    for(i=0;i<list.length;i++){
+      var p=list[i], keep=true, j;
+      for(j=0;j<list.length;j++){ if(i!==j && list[j] && p.indexOf(list[j]+'/')===0){ keep=false; break; } }
+      if(keep) roots.push(p);
+    }
+    if(roots.length===0){ log('No folders to delete.'); return; }
+
+    var delSet={}, f, d, k;
+    var totalFolders=0, totalLinks=0;
+    for(i=0;i<roots.length;i++){
+      d=listDescendants(roots[i]); totalFolders+=d.length;
+      for(k=0;k<d.length;k++){ f=d[k]; if(!delSet[f]){ delSet[f]=true; totalLinks += (state.itemsByFolder[f]||[]).length; } }
+    }
+
+    if(ask){
+      if(!confirm('Delete '+roots.length+' folder(s) and subfolders?\n\nTotal folders: '+totalFolders+'\nTotal links: '+totalLinks)) return;
+    }
+
+    var keepB=[], b;
+    for(i=0;i<state.flat.length;i++){
+      b=state.flat[i];
+      if(delSet[b.folder]){ if(state.selection[b.id]) delete state.selection[b.id]; }
+      else keepB.push(b);
+    }
+    state.flat=keepB;
+
+    for(k in state.itemsByFolder){ if(state.itemsByFolder.hasOwnProperty(k)){ if(delSet[k]) delete state.itemsByFolder[k]; } }
+
+    for(k in state.folders){ if(state.folders.hasOwnProperty(k) && delSet[k]){
+      var parent=state.folders[k].parent;
+      if(parent!==null && typeof parent!=="undefined" && state.folders[parent]){
+        var arr=state.folders[parent].childrenFolders, idx=arr?arr.indexOf(k):-1;
+        if(idx>-1) arr.splice(idx,1);
+      }
+      delete state.folders[k];
+      if(state.folderChecks[k]) delete state.folderChecks[k];
+    }}
+
+    if(state.activeFolder && delSet[state.activeFolder]) state.activeFolder="";
+    renderFolders(); renderTable(); saveToLocal();
+    log('Deleted '+roots.length+' folder root(s); total '+totalFolders+' folder(s) and '+totalLinks+' link(s).');
+  }
+
+  function onDeleteFolder(){
+    var cur=state.activeFolder;
+    if(!cur){ alert('Select a folder to delete (click it on the left).'); return; }
+    if(cur===""){ alert('Cannot delete the root container.'); return; }
+    deleteFoldersCore([cur], true);
+  }
+
+  function onDeleteCheckedFolders(){
+    var list=[], k;
+    for(k in state.folderChecks){ if(state.folderChecks.hasOwnProperty(k) && state.folderChecks[k]){ if(k!=="") list.push(k); } }
+    if(list.length===0){ alert('Check one or more folders first.'); return; }
+    deleteFoldersCore(list, true);
+  }
+
+  /* ===========================
+     Search & selection helpers
+     =========================== */
+  function onSelectAll(){ var tbody=$('favorites-table').getElementsByTagName('tbody')[0]; var chks=tbody.querySelectorAll('.rowchk'),i; for(i=0;i<chks.length;i++){ state.selection[chks[i].getAttribute('data-id')]=true; } renderTable(); }
+  function onClearSel(){ state.selection={}; renderTable(); }
+  function onSearch(e){ var t=e.target||e.srcElement; state.filter=(t&&t.value)||''; renderTable(); }
+  function onToggleMaster(e){ var t=e.target||e.srcElement; var tbody=$('favorites-table').getElementsByTagName('tbody')[0]; var chks=tbody.querySelectorAll('.rowchk'),i,id; for(i=0;i<chks.length;i++){ id=chks[i].getAttribute('data-id'); if(t.checked) state.selection[id]=true; else delete state.selection[id]; } renderTable(); }
+
+  /* ===========================
+     Drag & Drop loader
+     =========================== */
+  function onDragEnter(e){ prevent(e); $('drop').className='drop drag'; }
+  function onDragOver(e){ prevent(e); }
+  function onDragLeave(e){ prevent(e); $('drop').className='drop'; }
+  function onDrop(e){
+    prevent(e); $('drop').className='drop';
+    var dt=e.dataTransfer || (e.originalEvent && e.originalEvent.dataTransfer);
+    if(!dt || !dt.files || !dt.files.length){ log('Drop: no files'); return; }
+    fileChosen({target:{files:[dt.files[0]]}});
+  }
+
+  /* ===========================
+     Wiring
+     =========================== */
+  var wiredOnce=false;
+  function wireAll(){
+    if(wiredOnce) return;
+    wiredOnce=true;
+    log('Wiring events…');
+
+    addEvent($('open-html'),      'click', onOpen);
+    addEvent($('load-demo'),      'click', onDemo);
+    addEvent($('save-as'),        'click', onSave);
+    addEvent($('save-edge'),      'click', onSaveEdge);
+    addEvent($('add-folder'),     'click', function(){
+      var p=prompt("Folder path (e.g. Favorites bar/Work):", state.activeFolder?state.activeFolder+"/":"");
+      if(!p) return;
+      p=p.replace(/\s*\/\s*/g,'/').replace(/\/+/,'/').replace(/^\s+|\s+$/g,'');
+      if(p===""||p==="(root)"){ state.activeFolder=""; renderFolders(); renderTable(); saveToLocal(); return; }
+      ensureFolderPathExists(p);
+      state.activeFolder=p; renderFolders(); renderTable(); saveToLocal(); log('Added/ensured folder: '+p);
+    });
+    addEvent($('add-link'),       'click', function(){
+      var t=prompt("Link title:",""); if(!t) return;
+      var u=prompt("Link URL (https://…):","https://"); if(!u) return;
+      var f=prompt("Folder path (blank = root):", state.activeFolder||""); if(f===null) return;
+      f=f.replace(/\s*\/\s*/g,'/').replace(/\/+/,'/').replace(/^\s+|\s+$/g,'');
+      ensureFolderPathExists(f);
+      var id=uid(); var bm={id:id,title:t,url:u,folder:f,addDate:Math.floor(Date.now()/1000)};
+      state.flat.push(bm); (state.itemsByFolder[f]||(state.itemsByFolder[f]=[])).push(id);
+      state.activeFolder=f; renderFolders(); renderTable(); saveToLocal(); log('Added link: '+t);
+    });
+    addEvent($('remove-dup'),     'click', onRemoveDuplicates);
+    addEvent($('rename-folder'),  'click', onRenameFolder);
+    addEvent($('delete-folder'),  'click', onDeleteFolder);
+    addEvent($('delete-folders'), 'click', onDeleteCheckedFolders);
+    addEvent($('delete-selected'),'click', onDeleteSelected);
+
+    addEvent($('select-all'),       'click', onSelectAll);
+    addEvent($('clear-selection'),  'click', onClearSel);
+    addEvent($('search-input'),     'input', onSearch);
+    addEvent($('select-all-rows'),  'change', onToggleMaster);
+
+    addEvent($('file-input'),'change', fileChosen);
+    addEvent($('file-input'),'input',  fileChosen);
+
+    var drop=$('drop');
+    addEvent(drop,'dragenter',onDragEnter);
+    addEvent(drop,'dragover', onDragOver);
+    addEvent(drop,'dragleave',onDragLeave);
+    addEvent(drop,'drop',     onDrop);
+    addEvent(drop,'keypress', activateLikeButton(onOpen));
+
+    addEvent($('edit-cancel'),'click', function(){ closeEditDialog(); });
+    addEvent($('edit-save'),  'click', function(){ saveEditDialog(); });
+
+    if(!state.folders[""]) ensureFolder("","(root)",null);
+    if(loadFromLocal()){ renderFolders(); renderTable(); log('Restored from localStorage.'); }
+    else { renderFolders(); renderTable(); }
+
+    log('Wired. Use “Load Demo” or “Open HTML”, or drop a file on the left.');
+  }
+
+  addEvent(document,'DOMContentLoaded',function(){ log('DOMContentLoaded'); wireAll(); });
+  document.onreadystatechange=function(){ if(document.readyState==='complete'){ log('readyState: complete'); wireAll(); } };
+  addEvent(window,'load',function(){ log('window.load'); wireAll(); });
+  log('Script loaded');
+  </script>
+</body>
+</html>
