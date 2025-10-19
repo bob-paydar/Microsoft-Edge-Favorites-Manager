@@ -1,5 +1,5 @@
 # Edge Favorites Manager — Audit Friendly (ES5)
-
+![screenshot](https://github.com/bob-paydar/Microsoft-Edge-Favorites-Manager/blob/main/screenshot.png)
 A single-file HTML app to **view, clean, edit, and export** Microsoft Edge / Chromium favorites (bookmarks).  
 It is **ES5-only** (no `let/const`, no arrow functions, no promises), uses **triple-wired event handlers** for broad browser compatibility, and is designed to be **audit-friendly & accessible**.
 
